@@ -11,42 +11,44 @@ import (
 )
 
 type Policier struct {
-	globalBps		uint64
-	connBps			uint64
-	connPool		sync.Map
+	globalBps uint64
+	connBPS   uint64
+	connPool  sync.Map
 
-	limiter			*rate.Limiter
-	limiterLock		sync.Mutex
-	maxChunk		uint64
+	limiter     *rate.Limiter
+	maxChunk    uint64
 }
 
-// Creates new policier with given bandwidth limit
-func NewPolicier(gloablKbps uint64, connKbps uint64) *Policier {
+// Creates new policier with given bandwidth limit in KBps (kiloBYtes)
+// If bandwidth is zero, there is no limit
+func NewPolicier(gloablKBPS uint64, connKBPS uint64) *Policier {
 	policier := &Policier{
-		connBps:	connKbps*1024,
-		limiter:	rate.NewLimiter(rate.Limit(0), 0),
+		connBPS: connKBPS * 1024,
+		limiter: rate.NewLimiter(rate.Limit(0), 0),
 	}
-	policier.SetGlobalRate(gloablKbps)
+	policier.SetGlobalRate(gloablKBPS)
 
 	return policier
 }
 
+// SetConnRate setc rate limit per each connection, including all currently existent
 func (p *Policier) SetConnRate(kbps uint64) {
 	connRate := kbps * 1024
-	atomic.StoreUint64(&p.connBps, connRate)
+	atomic.StoreUint64(&p.connBPS, connRate)
 
-	p.connPool.Range(func(k,v interface{}) bool {
-		v.(*WrappedConn).SetRate(kbps, atomic.LoadUint64(&p.maxChunk))
+	p.connPool.Range(func(k, v interface{}) bool {
+		v.(*WrappedConn).setRate(kbps, atomic.LoadUint64(&p.maxChunk))
 		return true
 	})
 }
 
+// SetGlobalRate sets global rate limit per server
 func (p *Policier) SetGlobalRate(kbps uint64) {
 	globalRate := kbps * 1024
-	connRate := atomic.LoadUint64(&p.connBps)
+	connRate := atomic.LoadUint64(&p.connBPS)
 
-	// There is no sence to set global limit < conn limit
-	if globalRate > 0 && globalRate <  connRate {
+	// There is no sense to set global limit < conn limit
+	if globalRate > 0 && globalRate < connRate {
 		atomic.StoreUint64(&p.globalBps, connRate)
 	} else {
 		atomic.StoreUint64(&p.globalBps, globalRate)
@@ -54,35 +56,40 @@ func (p *Policier) SetGlobalRate(kbps uint64) {
 
 	// Calculate maximum chunk size.
 	// We don't want single conn to occupy whole global limit
-	var maxChunk uint64 = 128*1024
+	var maxChunk uint64 = 128 * 1024
 	if globalRate > 0 {
-		maxChunk = uint64(math.Ceil(float64(globalRate)) / 50)
+		maxChunk = uint64(math.Ceil(float64(globalRate) / 50))
 	}
 	atomic.StoreUint64(&p.maxChunk, maxChunk)
 
 	// loop over all connections and re-set max chunk
-	p.connPool.Range(func(k,v interface{}) bool {
-		v.(*WrappedConn).CalcChunk(maxChunk)
+	p.connPool.Range(func(k, v interface{}) bool {
+		v.(*WrappedConn).calcChunk(maxChunk)
 		return true
 	})
 
-	p.limiter = rate.NewLimiter(rate.Limit(globalRate), int(globalRate))
+	limit := rate.Limit(globalRate)
+	if globalRate == 0 {
+		limit = rate.Inf
+	}
+	p.limiter = rate.NewLimiter(limit, int(globalRate))
 }
 
 // Wrap Accept() so that we can just replace
 // `..... := listener.Accept` -> `...... := policier.Wrap(listener.Accept())`
-func (p *Policier) Wrap(conn net.Conn, err error) (net.Conn, error) {
+func (p *Policier) Wrap(conn net.Conn, err error) (*WrappedConn, error) {
 	if err != nil {
-		return conn, err
+		return nil, err
 	}
 
 	// wrap and do stuff
 	sizes := make(chan uint64)
 	permits := make(chan struct{}, 1)
-	wrapped := WrapConn(conn, p.connBps, atomic.LoadUint64(&p.maxChunk), sizes, permits)
-	go p.listenConn(wrapped, sizes, permits)
+	wrapped := WrapConn(conn, p.connBPS, atomic.LoadUint64(&p.maxChunk), sizes, permits)
+	go p.listenConn(sizes, permits)
 
-	// this will not work for unix sockets or pipes, but i assume we will not serve local log files over local unix socket
+	// this will not work for unix sockets or pipes, but i assume we will not serve
+	// local log files over local unix socket
 	p.connPool.Store(wrapped.RemoteAddr(), wrapped)
 
 	return wrapped, nil
@@ -91,33 +98,33 @@ func (p *Policier) Wrap(conn net.Conn, err error) (net.Conn, error) {
 // 1: listen integers chan: chunk size to be written
 // 2: on limiter.Accept - send struct{} signal to wrapped conn
 // 3: on received struct{} in wrapped struct, write
-func (p *Policier) listenConn(wrapped *WrappedConn, sizes <-chan uint64, permits chan<- struct{}) {
+func (p *Policier) listenConn(sizes <-chan uint64, permits chan<- struct{}) {
 	for {
-		select {
-		case size, ok := <-sizes:
-			if !ok {
-				close(permits)
-				return
-			}
-
-			// limit...
-			p.limiterLock.Lock()
-			limiter := (*rate.Limiter)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&p.limiter))))
-			p.limiterLock.Unlock()
-			globalBPS := atomic.LoadUint64(&p.globalBps)
-
-			// there may be very short period when max.chunk size is not updated in connection, but limiter's burst value
-			// may be decreased. With very little chance we can stuck here - so if chunk size is greater then our burst,
-			// just pass it right now. It should not break our limits.
-			if globalBPS == 0 || uint64(limiter.Burst()) < size {
-				permits <- struct{}{}
-				break
-			}
-
-			now := time.Now()
-			reservation := limiter.ReserveN(time.Now(), int(size))
-			time.Sleep(reservation.DelayFrom(now))
-			permits <- struct{}{}
+		size, ok := <-sizes
+		if !ok {
+			close(permits)
+			return
 		}
+
+		// limit...
+		limiter := (*rate.Limiter)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&p.limiter))))
+
+		globalBPS := atomic.LoadUint64(&p.globalBps)
+		if globalBPS == 0 {
+			permits <- struct{}{}
+			continue
+		}
+
+		// there may be very short period when max.chunk size is not updated in connection, but limiter's burst value
+		// may be decreased. With very little chance we can stuck here - so if chunk size is greater then our burst,
+		// try to reserve 'burst' size, it will compensate small traffic peak
+		if uint64(limiter.Burst()) < size && limiter.Burst() > 0 {
+			size = uint64(limiter.Burst())
+		}
+
+		now := time.Now()
+		reservation := limiter.ReserveN(time.Now(), int(size))
+		time.Sleep(reservation.DelayFrom(now))
+		permits <- struct{}{}
 	}
 }

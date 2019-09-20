@@ -13,13 +13,12 @@ func transferXBytes(bytes uint64, limit uint64) (int, int, error) {
 	// assuming global rate is 100mb => bytes(100mbps)/30 = 436906
 	sizes := make(chan uint64)
 	permits := make(chan struct{})
-	server := WrapConn(s, limit, 436906, sizes, permits)	// ~ 10 kBps
+	server := WrapConn(s, limit, 436906, sizes, permits) // ~ 10 kBps
 	go func(chan uint64, chan struct{}) {
-		for _ = range sizes {
+		for range sizes {
 			permits <- struct{}{}
 		}
 	}(sizes, permits)
-
 
 	var read int
 	var wrote int
@@ -40,7 +39,7 @@ func transferXBytes(bytes uint64, limit uint64) (int, int, error) {
 		wg.Done()
 	}(&wg)
 
-	sndbuf := make([]byte, bytes)			// in-memory, for tiny tests only. For larger tests, generate/read chunks
+	sndbuf := make([]byte, bytes) // in-memory, for tiny tests only. For larger tests, generate/read chunks
 	wrote, err = server.Write(sndbuf)
 	if err != nil {
 		return read, wrote, err
@@ -57,19 +56,23 @@ func runTransferTest(t *testing.T, bytes uint64, targetBps uint64) {
 	r, w, err := transferXBytes(bytes, targetBps)
 	//fmt.Printf("read: %d, write: %d, passed: %d\n", r, w, bytes)
 	if err != nil {
-		t.Fatalf("Error during transfer %d bytes with %d bps target: %s\n", bytes, targetBps, err.Error())
+		t.Errorf("Error during transfer %d bytes with %d bps target: %s\n", bytes, targetBps, err.Error())
 	}
 	elapsed := time.Since(start)
 	if uint64(r) != bytes {
-		t.Fatalf("%db/%d bps: read wrong bytes count: %d, while expected %d", bytes, targetBps, r, bytes)
+		t.Errorf("%db/%d bps: read wrong bytes count: %d, while expected %d", bytes, targetBps, r, bytes)
 	}
 	if uint64(w) != bytes {
-		t.Fatalf("%db/%d bps: write wrong bytes count: %d, while expected %d", bytes, targetBps, w, bytes)
+		t.Errorf("%db/%d bps: write wrong bytes count: %d, while expected %d", bytes, targetBps, w, bytes)
 	}
 
-	fmt.Printf("Transfered %d bytes in %v, avg. speed is %d bps (%d kbps) with target=%d bps (%d kbps)\n", bytes, elapsed, bytes/uint64(elapsed.Seconds()), bytes/uint64(elapsed.Seconds()) / 1024, targetBps, targetBps / 1024)
+	fmt.Printf("Transferred %d bytes in %v, avg. speed is %d bps (%d kbps) with target=%d bps (%d kbps)\n",
+		bytes, elapsed,
+		bytes/uint64(elapsed.Seconds()),      // bps
+		bytes/uint64(elapsed.Seconds())/1024, // kbps
+		targetBps,
+		targetBps/1024)
 }
-
 
 // Simple verbose test
 func TestTransfer(t *testing.T) {
