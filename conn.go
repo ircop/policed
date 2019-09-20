@@ -1,6 +1,7 @@
 package policied
 
 import (
+	"errors"
 	"golang.org/x/time/rate"
 	"net"
 	"sync"
@@ -9,6 +10,8 @@ import (
 	"unsafe"
 )
 
+var ErrConnClosed = errors.New("Connection is closed")
+
 type WrappedConn struct {
 	conn		net.Conn
 	bps			uint64
@@ -16,13 +19,20 @@ type WrappedConn struct {
 
 	limiter		*rate.Limiter
 	limiterLock	sync.Mutex
+
+	sizes		chan<- uint64
+	permits		<-chan struct{}
+	closed		bool
+	onceCloser	sync.Once
 }
 
 //func WrapConn(conn net.Conn, bps uint64, check chan<- uint32, release <-chan struct{}) net.Conn {
-func WrapConn(conn net.Conn, bps uint64, maxChunk uint64) *WrappedConn {
+func WrapConn(conn net.Conn, bps uint64, maxChunk uint64, sizes chan<- uint64, permits <-chan struct{}) *WrappedConn {
 	wc := WrappedConn{
 		conn:conn,
 		bps:bps,		// bytes, not bits
+		sizes:sizes,
+		permits:permits,
 		limiter:rate.NewLimiter(rate.Inf, 0),
 	}
 
@@ -65,9 +75,14 @@ func (c WrappedConn) Write(b []byte) (int, error) {
 	bytes := uint64(len(b))
 	for i = 0; i < bytes; i += chunkSize {
 		now := time.Now()
+		// first check global limits, then local
 		if i +chunkSize > bytes {
 			// send whole chunkSize
 			toWrite := chunkSize - (i+ chunkSize - bytes)
+
+			c.sizes <- toWrite
+			<-c.permits
+
 			reservation := limiter.ReserveN(now, int(toWrite))
 			time.Sleep(reservation.DelayFrom(now))
 
@@ -76,6 +91,9 @@ func (c WrappedConn) Write(b []byte) (int, error) {
 			return wrote, err
 		} else {
 			// send partial chunkSize
+			c.sizes <- chunkSize
+			<-c.permits
+
 			reservation := limiter.ReserveN(now, int(chunkSize))
 			time.Sleep(reservation.DelayFrom(now))
 
@@ -102,6 +120,13 @@ func (c WrappedConn) Read(b []byte) (n int, err error) {
 	return c.conn.Read(b)
 }
 func (c WrappedConn) Close() error {
+	if c.closed {
+		return ErrConnClosed
+	}
+	c.onceCloser.Do(func() {
+		close(c.sizes)
+		c.closed = true
+	})
 	return c.conn.Close()
 }
 func (c WrappedConn) LocalAddr() net.Addr {

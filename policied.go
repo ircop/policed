@@ -6,6 +6,8 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
+	"time"
+	"unsafe"
 )
 
 type Policier struct {
@@ -14,6 +16,7 @@ type Policier struct {
 	connPool		sync.Map
 
 	limiter			*rate.Limiter
+	limiterLock		sync.Mutex
 	maxChunk		uint64
 }
 
@@ -65,8 +68,10 @@ func (p *Policier) Wrap(conn net.Conn, err error) (net.Conn, error) {
 	}
 
 	// wrap and do stuff
-	wrapped := WrapConn(conn, p.connBps, atomic.LoadUint64(&p.maxChunk))
-	go p.listenConn(wrapped)
+	sizes := make(chan uint64)
+	permits := make(chan struct{}, 1)
+	wrapped := WrapConn(conn, p.connBps, atomic.LoadUint64(&p.maxChunk), sizes, permits)
+	go p.listenConn(wrapped, sizes, permits)
 
 	// this will not work for unix sockets or pipes, but i assume we will not serve local log files over local unix socket
 	p.connPool.Store(wrapped.RemoteAddr(), &wrapped)
@@ -77,6 +82,33 @@ func (p *Policier) Wrap(conn net.Conn, err error) (net.Conn, error) {
 // 1: listen integers chan: chunk size to be written
 // 2: on limiter.Accept - send struct{} signal to wrapped conn
 // 3: on received struct{} in wrapped struct, write
-func (p *Policier) listenConn(wrapped *WrappedConn) {
-	//
+func (p *Policier) listenConn(wrapped *WrappedConn, sizes <-chan uint64, permits chan<- struct{}) {
+	for {
+		select {
+		case size, ok := <-sizes:
+			if !ok {
+				close(permits)
+				return
+			}
+
+			// limit...
+			p.limiterLock.Lock()
+			limiter := (*rate.Limiter)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&p.limiter))))
+			p.limiterLock.Unlock()
+			globalBPS := atomic.LoadUint64(&p.globalBps)
+
+			// there may be very short period when max.chunk size is not updated in connection, but limiter's burst value
+			// may be decreased. With very little chance we can stuck here - so if chunk size is greater then our burst,
+			// just pass it right now. It should not break our limits.
+			if globalBPS == 0 || uint64(limiter.Burst()) < size {
+				permits <- struct{}{}
+				break
+			}
+
+			now := time.Now()
+			reservation := limiter.ReserveN(time.Now(), int(size))
+			time.Sleep(reservation.DelayFrom(now))
+			permits <- struct{}{}
+		}
+	}
 }

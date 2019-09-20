@@ -12,7 +12,15 @@ import (
 func transferXBytes(bytes uint64, limit uint64) (int, int, error) {
 	client, s := net.Pipe()
 	// assuming global rate is 100mb => bytes(100mbps)/30 = 436906
-	server := WrapConn(s, limit, 436906)	// ~ 10 kBps
+	sizes := make(chan uint64)
+	permits := make(chan struct{})
+	server := WrapConn(s, limit, 436906, sizes, permits)	// ~ 10 kBps
+	go func(chan uint64, chan struct{}) {
+		for _ = range sizes {
+			permits <- struct{}{}
+		}
+	}(sizes, permits)
+
 
 	var read int
 	var wrote int
@@ -59,6 +67,8 @@ func runTransferTest(t *testing.T, bytes uint64, targetBps uint64) {
 	fmt.Printf("Transfered %d bytes in %v, avg. speed is %d bps (%d kbps) with target=%d bps (%d kbps)\n", bytes, elapsed, bytes/uint64(elapsed.Seconds()), bytes/uint64(elapsed.Seconds()) / 1024, targetBps, targetBps / 1024)
 }
 
+
+// Simple verbose test
 func TestTransfer(t *testing.T) {
 	// 1 kB with limit=128 bps; short test
 	runTransferTest(t, 1024, 128)
@@ -66,9 +76,9 @@ func TestTransfer(t *testing.T) {
 	// larger test for ~ 30 seconds with small traffic
 	runTransferTest(t, 30*1024, 1024)
 
-	// test for ~30 seconds with heavy traffic, ~90mB
+	// test for ~30 seconds with heavy traffic, ~90MB
 	runTransferTest(t, 90*1024*1024, 3*1024*1024)
 
 	//transfer 1GB over 100mbps link: 100mb = 12,5mB, should take smtg about 80s
-	//runTransferTest(t, 1000*1000*1000, 12500*1000)
+	runTransferTest(t, 1000*1000*1000, 12500*1000)
 }
