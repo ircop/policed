@@ -2,7 +2,6 @@ package policied
 
 import (
 	"fmt"
-	"github.com/stretchr/testify/require"
 	"net"
 	"sync"
 	"testing"
@@ -61,8 +60,12 @@ func runTransferTest(t *testing.T, bytes uint64, targetBps uint64) {
 		t.Fatalf("Error during transfer %d bytes with %d bps target: %s\n", bytes, targetBps, err.Error())
 	}
 	elapsed := time.Since(start)
-	require.Equal(t, bytes, uint64(r), "%db/%dbps: read wrong bytes count", bytes, targetBps)
-	require.Equal(t, bytes, uint64(w), "%db/%dbps: wrote wrong bytes count", bytes, targetBps)
+	if uint64(r) != bytes {
+		t.Fatalf("%db/%d bps: read wrong bytes count: %d, while expected %d", bytes, targetBps, r, bytes)
+	}
+	if uint64(w) != bytes {
+		t.Fatalf("%db/%d bps: write wrong bytes count: %d, while expected %d", bytes, targetBps, w, bytes)
+	}
 
 	fmt.Printf("Transfered %d bytes in %v, avg. speed is %d bps (%d kbps) with target=%d bps (%d kbps)\n", bytes, elapsed, bytes/uint64(elapsed.Seconds()), bytes/uint64(elapsed.Seconds()) / 1024, targetBps, targetBps / 1024)
 }
@@ -79,6 +82,6 @@ func TestTransfer(t *testing.T) {
 	// test for ~30 seconds with heavy traffic, ~90MB
 	runTransferTest(t, 90*1024*1024, 3*1024*1024)
 
-	//transfer 1GB over 100mbps link: 100mb = 12,5mB, should take smtg about 80s
+	//transfer 1GB over 100mbps link (100mb = 12,5MB), should take smtg about 80s
 	runTransferTest(t, 1000*1000*1000, 12500*1000)
 }

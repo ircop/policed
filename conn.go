@@ -36,13 +36,13 @@ func WrapConn(conn net.Conn, bps uint64, maxChunk uint64, sizes chan<- uint64, p
 		limiter:rate.NewLimiter(rate.Inf, 0),
 	}
 
-	wc.SetLimit(bps)
-	wc.CalcChunk(maxChunk)
+	wc.SetRate(bps, maxChunk)
+	//wc.CalcChunk(maxChunk)
 
 	return &wc
 }
 
-func (c *WrappedConn) SetLimit(bps uint64) {
+func (c *WrappedConn) SetRate(bps uint64, maxChunk uint64) {
 	atomic.StoreUint64(&c.bps, bps)
 	if bps == 0 {
 		return
@@ -51,6 +51,8 @@ func (c *WrappedConn) SetLimit(bps uint64) {
 	c.limiterLock.Lock()
 	c.limiter = rate.NewLimiter(rate.Limit(bps), int(bps))
 	c.limiterLock.Unlock()
+
+	c.CalcChunk(maxChunk)
 }
 
 func (c WrappedConn) Write(b []byte) (int, error) {
@@ -58,7 +60,7 @@ func (c WrappedConn) Write(b []byte) (int, error) {
 		return c.conn.Write(b)
 	}
 
-	// copy limiter pointer so that we can thread-safely replace limiter
+	// copy limiter pointer so that we can thread-safely replace limiter with new one
 	c.limiterLock.Lock()
 	limiter := (*rate.Limiter)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&c.limiter))))
 	c.limiterLock.Unlock()

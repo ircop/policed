@@ -31,6 +31,16 @@ func NewPolicier(gloablKbps uint64, connKbps uint64) *Policier {
 	return policier
 }
 
+func (p *Policier) SetConnRate(kbps uint64) {
+	connRate := kbps * 1024
+	atomic.StoreUint64(&p.connBps, connRate)
+
+	p.connPool.Range(func(k,v interface{}) bool {
+		v.(*WrappedConn).SetRate(kbps, atomic.LoadUint64(&p.maxChunk))
+		return true
+	})
+}
+
 func (p *Policier) SetGlobalRate(kbps uint64) {
 	globalRate := kbps * 1024
 	connRate := atomic.LoadUint64(&p.connBps)
@@ -38,7 +48,6 @@ func (p *Policier) SetGlobalRate(kbps uint64) {
 	// There is no sence to set global limit < conn limit
 	if globalRate > 0 && globalRate <  connRate {
 		atomic.StoreUint64(&p.globalBps, connRate)
-		p.globalBps = p.connBps
 	} else {
 		atomic.StoreUint64(&p.globalBps, globalRate)
 	}
@@ -47,7 +56,7 @@ func (p *Policier) SetGlobalRate(kbps uint64) {
 	// We don't want single conn to occupy whole global limit
 	var maxChunk uint64 = 128*1024
 	if globalRate > 0 {
-		maxChunk = uint64(math.Ceil(float64(p.globalBps)) / 50)
+		maxChunk = uint64(math.Ceil(float64(globalRate)) / 50)
 	}
 	atomic.StoreUint64(&p.maxChunk, maxChunk)
 
@@ -57,7 +66,7 @@ func (p *Policier) SetGlobalRate(kbps uint64) {
 		return true
 	})
 
-	p.limiter = rate.NewLimiter(rate.Limit(p.globalBps), int(p.globalBps))
+	p.limiter = rate.NewLimiter(rate.Limit(globalRate), int(globalRate))
 }
 
 // Wrap Accept() so that we can just replace
@@ -74,7 +83,7 @@ func (p *Policier) Wrap(conn net.Conn, err error) (net.Conn, error) {
 	go p.listenConn(wrapped, sizes, permits)
 
 	// this will not work for unix sockets or pipes, but i assume we will not serve local log files over local unix socket
-	p.connPool.Store(wrapped.RemoteAddr(), &wrapped)
+	p.connPool.Store(wrapped.RemoteAddr(), wrapped)
 
 	return wrapped, nil
 }
