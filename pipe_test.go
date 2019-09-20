@@ -2,16 +2,17 @@ package policied
 
 import (
 	"fmt"
+	"github.com/stretchr/testify/require"
 	"net"
 	"sync"
 	"testing"
-	"github.com/stretchr/testify/require"
 	"time"
 )
 
 func transferXBytes(bytes uint64, limit uint64) (int, int, error) {
 	client, s := net.Pipe()
-	server := WrapConn(s, limit)	// ~ 10 kBps
+	// assuming global rate is 100mb => bytes(100mbps)/30 = 436906
+	server := WrapConn(s, limit, 436906)	// ~ 10 kBps
 
 	var read int
 	var wrote int
@@ -47,7 +48,7 @@ func transferXBytes(bytes uint64, limit uint64) (int, int, error) {
 func runTransferTest(t *testing.T, bytes uint64, targetBps uint64) {
 	start := time.Now()
 	r, w, err := transferXBytes(bytes, targetBps)
-	fmt.Printf("read: %d, write: %d, passed: %d\n", r, w, bytes)
+	//fmt.Printf("read: %d, write: %d, passed: %d\n", r, w, bytes)
 	if err != nil {
 		t.Fatalf("Error during transfer %d bytes with %d bps target: %s\n", bytes, targetBps, err.Error())
 	}
@@ -55,7 +56,7 @@ func runTransferTest(t *testing.T, bytes uint64, targetBps uint64) {
 	require.Equal(t, bytes, uint64(r), "%db/%dbps: read wrong bytes count", bytes, targetBps)
 	require.Equal(t, bytes, uint64(w), "%db/%dbps: wrote wrong bytes count", bytes, targetBps)
 
-	fmt.Printf("Transfered %d bytes in %v, avg. speed is %d bps with target=%d bps\n", bytes, elapsed, bytes/uint64(elapsed.Seconds()), targetBps)
+	fmt.Printf("Transfered %d bytes in %v, avg. speed is %d bps (%d kbps) with target=%d bps (%d kbps)\n", bytes, elapsed, bytes/uint64(elapsed.Seconds()), bytes/uint64(elapsed.Seconds()) / 1024, targetBps, targetBps / 1024)
 }
 
 func TestTransfer(t *testing.T) {

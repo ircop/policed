@@ -3,65 +3,83 @@ package policied
 import (
 	"golang.org/x/time/rate"
 	"net"
+	"sync"
+	"sync/atomic"
 	"time"
+	"unsafe"
 )
 
 type WrappedConn struct {
 	conn		net.Conn
 	bps			uint64
-	chunkSize	uint32
-
-	check		chan<- uint32
-	release		<-chan struct{}
+	chunkSize	uint64
 
 	limiter		*rate.Limiter
+	limiterLock	sync.Mutex
 }
 
 //func WrapConn(conn net.Conn, bps uint64, check chan<- uint32, release <-chan struct{}) net.Conn {
-func WrapConn(conn net.Conn, bps uint64) *WrappedConn {
+func WrapConn(conn net.Conn, bps uint64, maxChunk uint64) *WrappedConn {
 	wc := WrappedConn{
 		conn:conn,
 		bps:bps,		// bytes, not bits
+		limiter:rate.NewLimiter(rate.Inf, 0),
 	}
-	if bps > 0 {
-		wc.limiter = rate.NewLimiter(rate.Limit(bps), int(bps))
-	}
+
+	wc.SetLimit(bps)
+	wc.CalcChunk(maxChunk)
+
 	return &wc
 }
 
+func (c *WrappedConn) SetLimit(bps uint64) {
+	atomic.StoreUint64(&c.bps, bps)
+	if bps == 0 {
+		return
+	}
+
+	c.limiterLock.Lock()
+	c.limiter = rate.NewLimiter(rate.Limit(bps), int(bps))
+	c.limiterLock.Unlock()
+}
 
 func (c WrappedConn) Write(b []byte) (int, error) {
 	if c.bps == 0 {
 		return c.conn.Write(b)
 	}
 
-	// todo: make smaller chunks
-	// everything will be ok if global limit > current limit, but if it's less..
-	chunk := int(c.bps)
-	if len(b) > chunk {
-		chunk = int(float64(chunk) / 30)		// we don't want to occupy whole server limit with single conn
+	// copy limiter pointer so that we can thread-safely replace limiter
+	c.limiterLock.Lock()
+	limiter := (*rate.Limiter)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&c.limiter))))
+	c.limiterLock.Unlock()
+
+	chunkSize := atomic.LoadUint64(&c.chunkSize)
+	bps := atomic.LoadUint64(&c.bps)
+	if chunkSize > bps {
+		chunkSize = bps
 	}
 
-	// split bytes into chunks, with max size = bps
 	// i wish go had cpp iterators...
 	var wrote int
-	for i := 0; i < len(b); i += chunk {
+	var i uint64
+	bytes := uint64(len(b))
+	for i = 0; i < bytes; i += chunkSize {
 		now := time.Now()
-		if i + chunk > len(b) {
-			// send whole chunk
-			toWrite := chunk - (i+chunk - len(b))
-			reservation := c.limiter.ReserveN(now, toWrite)
+		if i +chunkSize > bytes {
+			// send whole chunkSize
+			toWrite := chunkSize - (i+ chunkSize - bytes)
+			reservation := limiter.ReserveN(now, int(toWrite))
 			time.Sleep(reservation.DelayFrom(now))
 
 			n, err := c.conn.Write(b[i:])
 			wrote += n
 			return wrote, err
 		} else {
-			// send partial chunk
-			reservation := c.limiter.ReserveN(now, chunk)
+			// send partial chunkSize
+			reservation := limiter.ReserveN(now, int(chunkSize))
 			time.Sleep(reservation.DelayFrom(now))
 
-			n, err := c.conn.Write(b[i:i+chunk])
+			n, err := c.conn.Write(b[i:i+chunkSize])
 			wrote += n
 			if err != nil {
 				return wrote, err
@@ -70,6 +88,14 @@ func (c WrappedConn) Write(b []byte) (int, error) {
 	}
 
 	return wrote, nil
+}
+
+func (c *WrappedConn) CalcChunk(max uint64) {
+	if max > c.bps {
+		atomic.StoreUint64(&c.chunkSize, atomic.LoadUint64(&c.bps))
+	} else {
+		atomic.StoreUint64(&c.chunkSize, max)
+	}
 }
 
 func (c WrappedConn) Read(b []byte) (n int, err error) {
