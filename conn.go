@@ -7,17 +7,18 @@ import (
 )
 
 type WrappedConn struct {
-	conn	net.Conn
-	bps		uint64
+	conn		net.Conn
+	bps			uint64
+	chunkSize	uint32
 
-	check	chan<- uint32
-	release	<-chan struct{}
+	check		chan<- uint32
+	release		<-chan struct{}
 
-	limiter	*rate.Limiter
+	limiter		*rate.Limiter
 }
 
 //func WrapConn(conn net.Conn, bps uint64, check chan<- uint32, release <-chan struct{}) net.Conn {
-func WrapConn(conn net.Conn, bps uint64, check chan<- uint32, release <-chan struct{}) *WrappedConn {
+func WrapConn(conn net.Conn, bps uint64) *WrappedConn {
 	wc := WrappedConn{
 		conn:conn,
 		bps:bps,		// bytes, not bits
@@ -27,6 +28,7 @@ func WrapConn(conn net.Conn, bps uint64, check chan<- uint32, release <-chan str
 	}
 	return &wc
 }
+
 
 func (c WrappedConn) Write(b []byte) (int, error) {
 	if c.bps == 0 {

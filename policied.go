@@ -50,7 +50,7 @@ func (p *Policier) Wrap(conn net.Conn, err error) (net.Conn, error) {
 	}
 
 	// wrap and do stuff
-	wrapped := WrapConn(conn, p.connBps, make(chan uint32), make(chan struct{}))
+	wrapped := WrapConn(conn, p.connBps)
 	go p.listenConn(wrapped)
 
 	// this will not work for unix sockets, but i assume we will not serve local files over local socket
