@@ -13,14 +13,15 @@ type Result struct {
 	Got     uint64
 }
 
-func runServer(t *testing.T, policier *Policier, addr string, sendBytes uint64) {
-	listener, err := net.Listen("tcp", addr)
+func runServer(t *testing.T, wg *sync.WaitGroup, policier *Policier, addr string, sendBytes uint64) {
+	listener, err := net.Listen("tcp4", addr)
 	if err != nil {
 		//t.Fatalf("failed to listen(): %s", err.Error())
 		t.Errorf("failed to listen(): %s", err.Error())
 		return
 	}
 	defer listener.Close()
+	wg.Done()
 
 	for {
 		conn, err := policier.Wrap(listener.Accept())
@@ -76,16 +77,20 @@ func TestZeroLimits(t *testing.T) {
 	var sendBytes uint64 = 30 * 1024 * 1024
 	policier := NewPolicier(0, 0)
 
-	go runServer(t, policier, ":8910", sendBytes) // send 30 MB
-	rchan := make(chan Result, 100)
 
 	var wg sync.WaitGroup
+	wg.Add(1)
+	go runServer(t, &wg, policier, ":8910", sendBytes) // send 30 MB
+	wg.Wait()		// wait for server to start
+
+	rchan := make(chan Result, 100)
+
 	wg.Add(1)
 	go runClient(t, 8910, &wg, rchan)
 	wg.Wait()
 	r := <-rchan
 	fmt.Printf("DL speed without limits: %d KB/s\n", r.AvgKBPS)
-	if r.AvgKBPS < 100000 {
+	if r.AvgKBPS < 50000 {
 		t.Fatalf("Too low loopback speed without limits: %d", r.AvgKBPS)
 	}
 
@@ -123,12 +128,15 @@ func TestServer(t *testing.T) {
 	// 4 Mbps / 1 Mbps / 512kb
 	var sendBytes uint64 = 30 * 1024 * 1024
 	policier := NewPolicier(1024*4, 1024)
-	go runServer(t, policier, ":8899", sendBytes) // send 30 MB
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go runServer(t, &wg, policier, ":8899", sendBytes) // send 30 MB
+	wg.Wait() // wait for server to start
 
 	rchan := make(chan Result, 100)
 
 	// single client:
-	var wg sync.WaitGroup
 	var count int
 	for i := 0; i < 1; i++ {
 		wg.Add(1)
@@ -189,10 +197,12 @@ func TestServer(t *testing.T) {
 func TestChangeSpeeds(t *testing.T) {
 	var sendBytes uint64 = 15 * 1024 * 1024
 	policier := NewPolicier(1024*4, 1024)
-	go runServer(t, policier, ":8999", sendBytes) // send 30 MB
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go runServer(t, &wg, policier, ":8999", sendBytes) // send 30 MB
+	wg.Wait()
 
 	rchan := make(chan Result, 100)
-	var wg sync.WaitGroup
 	wg.Add(1)
 	go runClient(t, 8999, &wg, rchan)
 	wg.Wait()
