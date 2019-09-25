@@ -65,7 +65,6 @@ func (p *Policier) SetGlobalRate(kbps uint64) {
 	if globalRate == 0 {
 		limit = rate.Inf
 	}
-	//p.limiter = rate.NewLimiter(limit, int(globalRate))
 	p.setLimiter(rate.NewLimiter(limit, int(globalRate)))
 }
 

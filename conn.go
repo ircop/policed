@@ -50,9 +50,7 @@ func (c *WrappedConn) setRate(bps uint64, maxChunk uint64) {
 	if bps == 0 {
 		limit = rate.Inf
 	}
-	//c.limiterLock.Lock()
-	//c.limiter = rate.NewLimiter(limit, int(bps))
-	//c.limiterLock.Unlock()
+
 	c.setLimiter(rate.NewLimiter(limit, int(bps)))
 }
 
@@ -64,20 +62,13 @@ func (c *WrappedConn) SetRate(kbps uint64) {
 	if bps == 0 {
 		limit = rate.Inf
 	}
-	//c.limiterLock.Lock()
-	//c.limiter = rate.NewLimiter(limit, int(bps))
-	//c.limiterLock.Unlock()
+
 	c.setLimiter(rate.NewLimiter(limit, int(bps)))
 }
 
 // Write to original connection, limiting with both conn/global rate limits
 func (c *WrappedConn) Write(b []byte) (int, error) {
-	// copy limiter pointer so that we can thread-safely replace limiter with new one
-	//c.limiterLock.Lock()
-	//limiter := (*rate.Limiter)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&c.limiter))))
-	//c.limiterLock.Unlock()
 	limiter := c.getCurrentLimiter()
-
 
 	chunkSize := atomic.LoadUint64(&c.chunkSize)
 	bps := atomic.LoadUint64(&c.bps)
