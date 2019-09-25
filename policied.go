@@ -1,13 +1,14 @@
 package policied
 
 import (
-	"golang.org/x/time/rate"
 	"math"
 	"net"
 	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
+
+	"golang.org/x/time/rate"
 )
 
 type Policier struct {

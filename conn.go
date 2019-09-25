@@ -2,12 +2,13 @@ package policied
 
 import (
 	"errors"
-	"golang.org/x/time/rate"
 	"net"
 	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
+
+	"golang.org/x/time/rate"
 )
 
 var ErrConnClosed = errors.New("connection is closed")
