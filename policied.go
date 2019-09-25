@@ -15,8 +15,8 @@ type Policier struct {
 	connBPS   uint64
 	connPool  sync.Map
 
-	limiter     *rate.Limiter
-	maxChunk    uint64
+	limiter  *rate.Limiter
+	maxChunk uint64
 }
 
 // Creates new policier with given bandwidth limit in KBps (kiloBYtes)
@@ -131,7 +131,7 @@ func (p *Policier) listenConn(sizes <-chan uint64, permits chan<- struct{}) {
 
 // limit range for all existing connections
 func (p *Policier) limitConnections(kbps uint64, maxChunk uint64) {
-	p.connPool.Range(func(k,v interface{}) bool {
+	p.connPool.Range(func(k, v interface{}) bool {
 		v.(*WrappedConn).setRate(kbps, maxChunk)
 		return true
 	})
@@ -149,6 +149,7 @@ func (p *Policier) setConnMaxChunk(maxChunk uint64) {
 func (p *Policier) getCurrentLimiter() *rate.Limiter {
 	return (*rate.Limiter)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&p.limiter))))
 }
+
 // replace current limiter with new one
 func (p *Policier) setLimiter(limiter *rate.Limiter) {
 	atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&p.limiter)), unsafe.Pointer(limiter))

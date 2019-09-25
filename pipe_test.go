@@ -73,16 +73,15 @@ func runTransferTest(t *testing.T, bytes uint64, targetBps uint64) {
 		targetBps/1024)
 }
 
-
 // Simple verbose test
 func TestTransfer(t *testing.T) {
 	testSet := []struct {
 		Bts       uint64
 		TargetBps uint64
 	}{
-		{1024, 128},							// 1kB, 128kBps
-		{30*1024, 1024},						// 30kB, 1mB/s
-		{90*1024*1024, 3 * 1024 * 1024},		// 90mB, ~3 mbps
+		{1024, 128},                         // 1kB, 128kBps
+		{30 * 1024, 1024},                   // 30kB, 1mB/s
+		{90 * 1024 * 1024, 3 * 1024 * 1024}, // 90mB, ~3 mbps
 	}
 
 	for _, test := range testSet {

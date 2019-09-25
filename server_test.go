@@ -24,25 +24,24 @@ func TestSingleClient(t *testing.T) {
 
 	// 4 mBps / 1 mBps
 	policier := NewPolicier(0, 0)
-	testnet.runServer(t, policier, 5 * 1024 * 1024 )		// 30 mBps
-
+	testnet.runServer(t, policier, 5*1024*1024) // 30 mBps
 
 	// single client:
 	go testnet.runClient(t, rchan)
-	res := <- rchan
+	res := <-rchan
 	logResult("single client [0/0]", res)
 	if res.AvgKBPS < 10000 {
 		t.Fatalf("loopback speed shouldn't be limited")
 	}
 
-	policier.SetGlobalRate(2048)		// 2 mB/s global
+	policier.SetGlobalRate(2048) // 2 mB/s global
 	go testnet.runClient(t, rchan)
-	res = <- rchan
+	res = <-rchan
 	checkResult(t, "single client [2/0]", res, 2048)
 
 	policier.SetConnRate(1024)
 	go testnet.runClient(t, rchan)
-	res = <- rchan
+	res = <-rchan
 	checkResult(t, "single client [2/1]", res, 1024)
 }
 
@@ -51,7 +50,7 @@ func TestMultiClientGlobal(t *testing.T) {
 	rchan := make(chan Result, 100)
 
 	policier := NewPolicier(10240, 0)
-	testnet.runServer(t, policier, 10 * 1024 * 1024)
+	testnet.runServer(t, policier, 10*1024*1024)
 
 	for i := 0; i < 5; i++ {
 		go testnet.runClient(t, rchan)
@@ -67,7 +66,7 @@ func TestMultiClientPerConn(t *testing.T) {
 	rchan := make(chan Result, 100)
 
 	policier := NewPolicier(10240, 1024)
-	testnet.runServer(t, policier, 10 * 1024 * 1024)
+	testnet.runServer(t, policier, 10*1024*1024)
 
 	for i := 0; i < 5; i++ {
 		go testnet.runClient(t, rchan)
@@ -83,13 +82,13 @@ func TestManyClients(t *testing.T) {
 	rchan := make(chan Result, 100)
 
 	policier := NewPolicier(25600, 0)
-	testnet.runServer(t, policier, 8 * 1024 * 1024)
+	testnet.runServer(t, policier, 8*1024*1024)
 
 	for i := 0; i < 100; i++ {
 		go testnet.runClient(t, rchan)
 	}
 	for i := 0; i < 100; i++ {
-		res := <- rchan
+		res := <-rchan
 		checkResult(t, "100 clients [25/0]", res, 256)
 	}
 }

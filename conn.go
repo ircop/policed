@@ -18,7 +18,7 @@ type WrappedConn struct {
 	maxChunk  uint64
 	chunkSize uint64
 
-	limiter     *rate.Limiter
+	limiter *rate.Limiter
 
 	sizes      chan<- uint64
 	permits    <-chan struct{}
@@ -80,14 +80,13 @@ func (c *WrappedConn) Write(b []byte) (int, error) {
 	var wrote int
 	var i uint64
 	bytes := uint64(len(b))
-	//fmt.Printf("chunkSize: %d\n", chunkSize)
+
 	for i = 0; i < bytes; i += chunkSize {
 		now := time.Now()
 		// first check global limits, then local
 		if i+chunkSize > bytes {
 			// send whole chunkSize
 			toWrite := chunkSize - (i + chunkSize - bytes)
-
 
 			c.sizes <- toWrite
 			<-c.permits
@@ -122,7 +121,7 @@ func (c *WrappedConn) calcChunk(max uint64) {
 	bps := atomic.LoadUint64(&c.bps)
 	atomic.StoreUint64(&c.maxChunk, max)
 
-	if max > bps && bps > 0{
+	if max > bps && bps > 0 {
 		atomic.StoreUint64(&c.chunkSize, bps)
 	} else {
 		atomic.StoreUint64(&c.chunkSize, max)
@@ -162,6 +161,7 @@ func (c *WrappedConn) SetWriteDeadline(t time.Time) error {
 func (c *WrappedConn) getCurrentLimiter() *rate.Limiter {
 	return (*rate.Limiter)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&c.limiter))))
 }
+
 // replace current limiter with new one
 func (c *WrappedConn) setLimiter(limiter *rate.Limiter) {
 	atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&c.limiter)), unsafe.Pointer(limiter))

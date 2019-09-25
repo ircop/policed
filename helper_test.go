@@ -7,12 +7,6 @@ import (
 	"time"
 )
 
-type testSet struct {
-	GlobalRate		uint64
-	ConnRate		uint64
-
-}
-
 type Result struct {
 	AvgKBPS int
 	Got     uint64
@@ -43,7 +37,7 @@ func (n *testNetwork) runServer(t *testing.T, policier *Policier, bytesToSend ui
 			conn, err := policier.Wrap(n.listener.Accept())
 			if err != nil {
 				select {
-				case <- n.stopListener:
+				case <-n.stopListener:
 					return
 				default:
 					t.Errorf("accept() failed: %s", err.Error())
@@ -63,8 +57,9 @@ func (n *testNetwork) runServer(t *testing.T, policier *Policier, bytesToSend ui
 				}
 			}()
 		}
-	} ()
+	}()
 }
+
 // run test set for currently running server
 func (n *testNetwork) StopServer() {
 	n.stopListener <- struct{}{}
@@ -80,7 +75,7 @@ func (n *testNetwork) runClient(t *testing.T, results chan<- Result) {
 	client, err := net.Dial("tcp4", n.curAddr)
 	if err != nil {
 		t.Errorf("failed to dial(): %s", err.Error())
-		results <- Result{AvgKBPS:-1, Got:0}
+		results <- Result{AvgKBPS: -1, Got: 0}
 		return
 	}
 
