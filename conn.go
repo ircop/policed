@@ -51,7 +51,7 @@ func (c *WrappedConn) setRate(bps uint64, maxChunk uint64) {
 		limit = rate.Inf
 	}
 
-	c.setLimiter(rate.NewLimiter(limit, int(bps)))
+	c.setLimiter(rate.NewLimiter(limit, int(c.chunkSize)))
 }
 
 // SetRate allows to set individual rate per each connection - public interface
