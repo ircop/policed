@@ -215,3 +215,28 @@ func TestChangingBurstConnSpeed(t *testing.T) {
 		t.Fatalf("burst: expected burst 0.5 to be >5%% faster then burst 0.005, but got %d vs %d", res1.AvgKBPS, res2.AvgKBPS)
 	}
 }
+
+func TestHiRatesBigBurst(t *testing.T) {
+	testnet := testNetwork{}
+	rchan := make(chan Result)
+
+	policier := NewPolicier(10240, 0)
+	policier.SetBurstFactor(0.05)
+	testnet.runServer(t, policier, 90*1024*1024)
+
+	go testnet.runClient(t, rchan)
+	res := <-rchan
+	checkResult(t, "128kbps", res, 10240)
+}
+
+func TestLowRatesDefaultBurst(t *testing.T) {
+	testnet := testNetwork{}
+	rchan := make(chan Result)
+
+	policier := NewPolicier(128, 0)
+	testnet.runServer(t, policier, 1024*1024)
+
+	go testnet.runClient(t, rchan)
+	res := <-rchan
+	checkResult(t, "128kbps", res, 128)
+}
