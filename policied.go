@@ -36,10 +36,7 @@ func (p *Policier) SetConnRate(kbps uint64) {
 	connRate := kbps * 1024
 	atomic.StoreUint64(&p.connBPS, connRate)
 
-	p.connPool.Range(func(k, v interface{}) bool {
-		v.(*WrappedConn).setRate(kbps, atomic.LoadUint64(&p.maxChunk))
-		return true
-	})
+	p.limitConnections(kbps, atomic.LoadUint64(&p.maxChunk))
 }
 
 // SetGlobalRate sets global rate limit per server
@@ -62,11 +59,7 @@ func (p *Policier) SetGlobalRate(kbps uint64) {
 	}
 	atomic.StoreUint64(&p.maxChunk, maxChunk)
 
-	// loop over all connections and re-set max chunk
-	p.connPool.Range(func(k, v interface{}) bool {
-		v.(*WrappedConn).calcChunk(maxChunk)
-		return true
-	})
+	p.setMaxChunk(maxChunk)
 
 	limit := rate.Limit(globalRate)
 	if globalRate == 0 {
@@ -127,4 +120,20 @@ func (p *Policier) listenConn(sizes <-chan uint64, permits chan<- struct{}) {
 		time.Sleep(reservation.DelayFrom(now))
 		permits <- struct{}{}
 	}
+}
+
+// limit range for all existing connections
+func (p *Policier) limitConnections(kbps uint64, maxChunk uint64) {
+	p.connPool.Range(func(k,v interface{}) bool {
+		v.(*WrappedConn).setRate(kbps, maxChunk)
+		return true
+	})
+}
+
+// set max chunk size for all existing connections
+func (p *Policier) setMaxChunk(maxChunk uint64) {
+	p.connPool.Range(func(k, v interface{}) bool {
+		v.(*WrappedConn).calcChunk(maxChunk)
+		return true
+	})
 }
