@@ -100,7 +100,7 @@ func (p *Policier) listenConn(sizes <-chan uint64, permits chan<- struct{}) {
 		}
 
 		// limit...
-		limiter := (*rate.Limiter)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&p.limiter))))
+		limiter := p.getCurrentLimiter()
 
 		globalBPS := atomic.LoadUint64(&p.globalBps)
 		if globalBPS == 0 {
@@ -136,4 +136,9 @@ func (p *Policier) setMaxChunk(maxChunk uint64) {
 		v.(*WrappedConn).calcChunk(maxChunk)
 		return true
 	})
+}
+
+// return pointer to current limiter
+func (p *Policier) getCurrentLimiter() *rate.Limiter {
+	return (*rate.Limiter)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&p.limiter))))
 }
