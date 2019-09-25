@@ -47,7 +47,7 @@ func (p *Policier) SetConnRate(kbps uint64) {
 	connRate := kbps * 1024
 
 	// check that conn.rate is <= global rate
-	globalRate := atomic.LoadUint64(&p.connBPS)
+	globalRate := atomic.LoadUint64(&p.globalBps)
 	if globalRate > 0 && connRate > globalRate {
 		connRate = globalRate
 	}
