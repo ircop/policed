@@ -55,7 +55,7 @@ func (p *Policier) SetGlobalRate(kbps uint64) {
 	// We don't want single conn to occupy whole global limit
 	var maxChunk uint64 = 128 * 1024
 	if globalRate > 0 {
-		maxChunk = uint64(math.Ceil(float64(globalRate) / 50))
+		maxChunk = uint64(math.Ceil(float64(globalRate) * 0.005))
 	}
 	atomic.StoreUint64(&p.maxChunk, maxChunk)
 
