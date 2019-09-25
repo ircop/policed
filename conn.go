@@ -2,6 +2,7 @@ package policied
 
 import (
 	"errors"
+	"math"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -14,10 +15,11 @@ import (
 var ErrConnClosed = errors.New("connection is closed")
 
 type WrappedConn struct {
-	conn      net.Conn
-	bps       uint64
-	maxChunk  uint64
-	chunkSize uint64
+	conn        net.Conn
+	bps         uint64
+	maxChunk    uint64
+	chunkSize   uint64
+	BurstFactor *BurstFactor
 
 	limiter *rate.Limiter
 
@@ -28,13 +30,15 @@ type WrappedConn struct {
 }
 
 //func WrapConn(conn net.Conn, bps uint64, check chan<- uint32, release <-chan struct{}) net.Conn {
-func WrapConn(conn net.Conn, bps uint64, maxChunk uint64, sizes chan<- uint64, permits <-chan struct{}) *WrappedConn {
+func WrapConn(conn net.Conn, bps uint64, maxChunk uint64, burstFactor *BurstFactor,
+	sizes chan<- uint64, permits <-chan struct{}) *WrappedConn {
 	wc := WrappedConn{
-		conn:    conn,
-		bps:     bps, // bytes, not bits
-		sizes:   sizes,
-		permits: permits,
-		limiter: rate.NewLimiter(rate.Inf, 0),
+		conn:        conn,
+		bps:         bps, // bytes, not bits
+		sizes:       sizes,
+		permits:     permits,
+		limiter:     rate.NewLimiter(rate.Inf, 0),
+		BurstFactor: burstFactor,
 	}
 
 	wc.setRate(bps, maxChunk)
@@ -73,8 +77,8 @@ func (c *WrappedConn) Write(b []byte) (int, error) {
 
 	chunkSize := atomic.LoadUint64(&c.chunkSize)
 	bps := atomic.LoadUint64(&c.bps)
-	if chunkSize > bps && bps > 0 {
-		chunkSize = bps
+	if chunkSize == 0 && bps == 0 {
+		return c.conn.Write(b)
 	}
 
 	// i wish go had cpp iterators...
@@ -117,16 +121,20 @@ func (c *WrappedConn) Write(b []byte) (int, error) {
 	return wrote, nil
 }
 
-// Calculate used chunk
+// Calculate chunk
 func (c *WrappedConn) calcChunk(max uint64) {
 	bps := atomic.LoadUint64(&c.bps)
 	atomic.StoreUint64(&c.maxChunk, max)
 
-	if max > bps && bps > 0 {
-		atomic.StoreUint64(&c.chunkSize, bps)
+	var chunkSize uint64
+	if bps == 0 {
+		chunkSize = max
 	} else {
-		atomic.StoreUint64(&c.chunkSize, max)
+		chunkSize = uint64(math.Ceil(float64(bps) * c.BurstFactor.Get()))
 	}
+
+	atomic.StoreUint64(&c.chunkSize, chunkSize)
+	c.setLimiter(rate.NewLimiter(rate.Limit(bps), int(chunkSize)))
 }
 
 func (c *WrappedConn) Read(b []byte) (n int, err error) {
