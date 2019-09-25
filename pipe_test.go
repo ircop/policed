@@ -54,7 +54,6 @@ func transferXBytes(bytes uint64, limit uint64) (int, int, error) {
 func runTransferTest(t *testing.T, bytes uint64, targetBps uint64) {
 	start := time.Now()
 	r, w, err := transferXBytes(bytes, targetBps)
-	//fmt.Printf("read: %d, write: %d, passed: %d\n", r, w, bytes)
 	if err != nil {
 		t.Errorf("Error during transfer %d bytes with %d bps target: %s\n", bytes, targetBps, err.Error())
 	}
@@ -74,17 +73,19 @@ func runTransferTest(t *testing.T, bytes uint64, targetBps uint64) {
 		targetBps/1024)
 }
 
+
 // Simple verbose test
 func TestTransfer(t *testing.T) {
-	// 1 kB with limit=128 bps; short test
-	runTransferTest(t, 1024, 128)
+	testSet := []struct {
+		Bts       uint64
+		TargetBps uint64
+	}{
+		{1024, 128},							// 1kB, 128kBps
+		{30*1024, 1024},						// 30kB, 1mB/s
+		{90*1024*1024, 3 * 1024 * 1024},		// 90mB, ~3 mbps
+	}
 
-	// larger test for ~ 30 seconds with small traffic
-	runTransferTest(t, 30*1024, 1024)
-
-	// test for ~30 seconds with heavy traffic, ~90MB
-	runTransferTest(t, 90*1024*1024, 3*1024*1024)
-
-	//transfer 1GB over 100mbps link (100mb = 12,5MB), should take smtg about 80s
-	runTransferTest(t, 1000*1000*1000, 12500*1000)
+	for _, test := range testSet {
+		runTransferTest(t, test.Bts, test.TargetBps)
+	}
 }
