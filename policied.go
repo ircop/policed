@@ -34,6 +34,13 @@ func NewPolicier(gloablKBPS uint64, connKBPS uint64) *Policier {
 // SetConnRate setc rate limit per each connection, including all currently existent
 func (p *Policier) SetConnRate(kbps uint64) {
 	connRate := kbps * 1024
+
+	// check that conn.rate is <= global rate
+	globalRate := atomic.LoadUint64(&p.connBPS)
+	if globalRate > 0 && connRate > globalRate {
+		connRate = globalRate
+	}
+
 	atomic.StoreUint64(&p.connBPS, connRate)
 
 	p.limitConnections(kbps, atomic.LoadUint64(&p.maxChunk))
