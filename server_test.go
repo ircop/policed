@@ -22,7 +22,7 @@ func TestSingleClient(t *testing.T) {
 	testnet := testNetwork{}
 	rchan := make(chan Result, 100)
 
-	// 4 mBps / 1 mBps
+	// 0 mBps / 0 mBps
 	policier := NewPolicier(0, 0)
 	testnet.runServer(t, policier, 5*1024*1024) // 30 mBps
 
@@ -39,10 +39,28 @@ func TestSingleClient(t *testing.T) {
 	res = <-rchan
 	checkResult(t, "single client [2/0]", res, 2048)
 
+	// set global rate back to 0: check manual limits zeroing
+	policier.SetGlobalRate(0)
+	go testnet.runClient(t, rchan)
+	res = <-rchan
+	logResult("single client [0/0]", res)
+	if res.AvgKBPS < 10000 {
+		t.Fatalf("loopback speed shouldn't be limited")
+	}
+
 	policier.SetConnRate(1024)
 	go testnet.runClient(t, rchan)
 	res = <-rchan
 	checkResult(t, "single client [2/1]", res, 1024)
+
+	// set conn rate back to 0: check manual limits zeroing
+	policier.SetConnRate(0)
+	go testnet.runClient(t, rchan)
+	res = <-rchan
+	logResult("single client [0/0]", res)
+	if res.AvgKBPS < 10000 {
+		t.Fatalf("loopback speed shouldn't be limited")
+	}
 }
 
 func TestMultiClientGlobal(t *testing.T) {
@@ -90,5 +108,49 @@ func TestManyClients(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		res := <-rchan
 		checkResult(t, "100 clients [25/0]", res, 256)
+	}
+}
+
+func TestChangingBurstGlobalSpeed(t *testing.T) {
+	testnet := testNetwork{}
+	rchan := make(chan Result)
+
+	policier := NewPolicier(1024, 0)
+	testnet.runServer(t, policier, 3*1024*1024)
+
+	go testnet.runClient(t, rchan)
+	res1 := <-rchan
+	logResult("global burst: first rate", res1)
+
+	policier.SetBurstFactor(0.5)
+	go testnet.runClient(t, rchan)
+	res2 := <-rchan
+	logResult("global burst: second rate", res2)
+
+	// expecting second download >10% faster
+	if res2.AvgKBPS < int(float64(res1.AvgKBPS)*1.05) {
+		t.Fatalf("burst: expected burst 0.5 to be >5%% faster then burst 0.005, but got %d vs %d", res1.AvgKBPS, res2.AvgKBPS)
+	}
+}
+
+func TestChangingBurstConnSpeed(t *testing.T) {
+	testnet := testNetwork{}
+	rchan := make(chan Result)
+
+	policier := NewPolicier(0, 1024)
+	testnet.runServer(t, policier, 3*1024*1024)
+
+	go testnet.runClient(t, rchan)
+	res1 := <-rchan
+	logResult("conn burst: first rate", res1)
+
+	policier.SetBurstFactor(0.5)
+	go testnet.runClient(t, rchan)
+	res2 := <-rchan
+	logResult("conn burst: second rate", res2)
+
+	// expecting second download >10% faster
+	if res2.AvgKBPS < int(float64(res1.AvgKBPS)*1.05) {
+		t.Fatalf("burst: expected burst 0.5 to be >5%% faster then burst 0.005, but got %d vs %d", res1.AvgKBPS, res2.AvgKBPS)
 	}
 }
