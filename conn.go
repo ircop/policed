@@ -19,7 +19,6 @@ type WrappedConn struct {
 	chunkSize uint64
 
 	limiter     *rate.Limiter
-	limiterLock sync.Mutex
 
 	sizes      chan<- uint64
 	permits    <-chan struct{}
@@ -51,9 +50,10 @@ func (c *WrappedConn) setRate(bps uint64, maxChunk uint64) {
 	if bps == 0 {
 		limit = rate.Inf
 	}
-	c.limiterLock.Lock()
-	c.limiter = rate.NewLimiter(limit, int(bps))
-	c.limiterLock.Unlock()
+	//c.limiterLock.Lock()
+	//c.limiter = rate.NewLimiter(limit, int(bps))
+	//c.limiterLock.Unlock()
+	c.setLimiter(rate.NewLimiter(limit, int(bps)))
 }
 
 // SetRate allows to set individual rate per each connection - public interface
@@ -64,17 +64,19 @@ func (c *WrappedConn) SetRate(kbps uint64) {
 	if bps == 0 {
 		limit = rate.Inf
 	}
-	c.limiterLock.Lock()
-	c.limiter = rate.NewLimiter(limit, int(bps))
-	c.limiterLock.Unlock()
+	//c.limiterLock.Lock()
+	//c.limiter = rate.NewLimiter(limit, int(bps))
+	//c.limiterLock.Unlock()
+	c.setLimiter(rate.NewLimiter(limit, int(bps)))
 }
 
 // Write to original connection, limiting with both conn/global rate limits
 func (c *WrappedConn) Write(b []byte) (int, error) {
 	// copy limiter pointer so that we can thread-safely replace limiter with new one
-	c.limiterLock.Lock()
-	limiter := (*rate.Limiter)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&c.limiter))))
-	c.limiterLock.Unlock()
+	//c.limiterLock.Lock()
+	//limiter := (*rate.Limiter)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&c.limiter))))
+	//c.limiterLock.Unlock()
+	limiter := c.getCurrentLimiter()
 
 
 	chunkSize := atomic.LoadUint64(&c.chunkSize)
@@ -163,4 +165,13 @@ func (c *WrappedConn) SetReadDeadline(t time.Time) error {
 }
 func (c *WrappedConn) SetWriteDeadline(t time.Time) error {
 	return c.conn.SetWriteDeadline(t)
+}
+
+// take pointer to current limiter
+func (c *WrappedConn) getCurrentLimiter() *rate.Limiter {
+	return (*rate.Limiter)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&c.limiter))))
+}
+// replace current limiter with new one
+func (c *WrappedConn) setLimiter(limiter *rate.Limiter) {
+	atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&c.limiter)), unsafe.Pointer(limiter))
 }

@@ -65,7 +65,8 @@ func (p *Policier) SetGlobalRate(kbps uint64) {
 	if globalRate == 0 {
 		limit = rate.Inf
 	}
-	p.limiter = rate.NewLimiter(limit, int(globalRate))
+	//p.limiter = rate.NewLimiter(limit, int(globalRate))
+	p.setLimiter(rate.NewLimiter(limit, int(globalRate)))
 }
 
 // Wrap Accept() so that we can just replace
@@ -141,4 +142,8 @@ func (p *Policier) setMaxChunk(maxChunk uint64) {
 // return pointer to current limiter
 func (p *Policier) getCurrentLimiter() *rate.Limiter {
 	return (*rate.Limiter)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&p.limiter))))
+}
+// replace current limiter with new one
+func (p *Policier) setLimiter(limiter *rate.Limiter) {
+	atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&p.limiter)), unsafe.Pointer(limiter))
 }
