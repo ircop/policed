@@ -49,26 +49,29 @@ func WrapConn(conn net.Conn, bps uint64, maxChunk uint64, burstFactor *BurstFact
 // internal, called from policed
 func (c *WrappedConn) setRate(bps uint64, maxChunk uint64) {
 	atomic.StoreUint64(&c.bps, bps)
-	c.calcChunk(maxChunk)
+	chunk := c.calcChunk(maxChunk)
 
 	limit := rate.Limit(bps)
 	if bps == 0 {
 		limit = rate.Inf
 	}
 
-	c.setLimiter(rate.NewLimiter(limit, int(c.chunkSize)))
+	c.setLimiter(rate.NewLimiter(limit, int(chunk)))
 }
 
 // SetRate allows to set individual rate per each connection - public interface
 func (c *WrappedConn) SetRate(kbps uint64) {
 	bps := kbps * 1024
 	atomic.StoreUint64(&c.bps, bps)
+	maxChunk := atomic.LoadUint64(&c.maxChunk)
+	chunk := c.calcChunk(maxChunk)
+
 	limit := rate.Limit(bps)
 	if bps == 0 {
 		limit = rate.Inf
 	}
 
-	c.setLimiter(rate.NewLimiter(limit, int(bps)))
+	c.setLimiter(rate.NewLimiter(limit, int(chunk)))
 }
 
 // Write to original connection, limiting with both conn/global rate limits
@@ -122,7 +125,7 @@ func (c *WrappedConn) Write(b []byte) (int, error) {
 }
 
 // Calculate chunk
-func (c *WrappedConn) calcChunk(max uint64) {
+func (c *WrappedConn) calcChunk(max uint64) uint64 {
 	bps := atomic.LoadUint64(&c.bps)
 	atomic.StoreUint64(&c.maxChunk, max)
 
@@ -135,6 +138,8 @@ func (c *WrappedConn) calcChunk(max uint64) {
 
 	atomic.StoreUint64(&c.chunkSize, chunkSize)
 	c.setLimiter(rate.NewLimiter(rate.Limit(bps), int(chunkSize)))
+
+	return chunkSize
 }
 
 func (c *WrappedConn) Read(b []byte) (n int, err error) {
