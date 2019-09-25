@@ -59,13 +59,13 @@ func (p *Policier) SetGlobalRate(kbps uint64) {
 	}
 	atomic.StoreUint64(&p.maxChunk, maxChunk)
 
-	p.setMaxChunk(maxChunk)
+	p.setConnMaxChunk(maxChunk)
 
 	limit := rate.Limit(globalRate)
 	if globalRate == 0 {
 		limit = rate.Inf
 	}
-	p.setLimiter(rate.NewLimiter(limit, int(globalRate)))
+	p.setLimiter(rate.NewLimiter(limit, int(maxChunk)))
 }
 
 // Wrap Accept() so that we can just replace
@@ -131,7 +131,7 @@ func (p *Policier) limitConnections(kbps uint64, maxChunk uint64) {
 }
 
 // set max chunk size for all existing connections
-func (p *Policier) setMaxChunk(maxChunk uint64) {
+func (p *Policier) setConnMaxChunk(maxChunk uint64) {
 	p.connPool.Range(func(k, v interface{}) bool {
 		v.(*WrappedConn).calcChunk(maxChunk)
 		return true
