@@ -2,6 +2,7 @@ package policied
 
 import (
 	"fmt"
+	"strconv"
 	"testing"
 )
 
@@ -63,35 +64,95 @@ func TestSingleClient(t *testing.T) {
 	}
 }
 
+// test speed with global limit
 func TestMultiClientGlobal(t *testing.T) {
 	testnet := testNetwork{}
 	rchan := make(chan Result, 100)
 
-	policier := NewPolicier(10240, 0)
+	policier := NewPolicier(0, 0)
 	testnet.runServer(t, policier, 10*1024*1024)
 
-	for i := 0; i < 5; i++ {
-		go testnet.runClient(t, rchan)
+	testData := []struct {
+		Speed    uint64
+		Expected float64
+	}{
+		{5120, 1024},
+		{10240, 2048},
+		{20480, 4096},
 	}
-	for i := 0; i < 5; i++ {
-		res := <-rchan
-		checkResult(t, "multi-client: [10/0]", res, 2048)
+
+	for _, data := range testData {
+		policier.SetGlobalRate(data.Speed)
+
+		for i := 0; i < 5; i++ {
+			go testnet.runClient(t, rchan)
+		}
+		for i := 0; i < 5; i++ {
+			res := <-rchan
+			checkResult(t, "multi-client global: "+strconv.Itoa(int(data.Speed))+": ", res, data.Expected)
+		}
 	}
 }
 
+// test speed with per-connection limit
 func TestMultiClientPerConn(t *testing.T) {
 	testnet := testNetwork{}
 	rchan := make(chan Result, 100)
 
-	policier := NewPolicier(10240, 1024)
+	policier := NewPolicier(0, 0)
 	testnet.runServer(t, policier, 10*1024*1024)
 
-	for i := 0; i < 5; i++ {
-		go testnet.runClient(t, rchan)
+	testData := []struct {
+		Speed    uint64
+		Expected float64
+	}{
+		{5120, 5120},
+		{10240, 10240},
+		{20480, 20480},
 	}
-	for i := 0; i < 5; i++ {
-		res := <-rchan
-		checkResult(t, "multi-client: [10/1]", res, 1024)
+
+	for _, data := range testData {
+		policier.SetConnRate(data.Speed)
+
+		for i := 0; i < 5; i++ {
+			go testnet.runClient(t, rchan)
+		}
+		for i := 0; i < 5; i++ {
+			res := <-rchan
+			checkResult(t, "multi-client conn: "+strconv.Itoa(int(data.Speed))+": ", res, data.Expected)
+		}
+	}
+}
+
+// test mixed speed changes
+func TestMultiClientMixed(t *testing.T) {
+	testnet := testNetwork{}
+	rchan := make(chan Result, 100)
+
+	policier := NewPolicier(0, 0)
+	testnet.runServer(t, policier, 10*1024*1024)
+
+	testData := []struct {
+		GlobalSpeed uint64
+		ConnSpeed   uint64
+		Expected    float64
+	}{
+		{0, 5120, 5120},
+		{5120, 0, 1024},
+		{10240, 5120, 2048},
+		{20480, 10240, 4096},
+	}
+	for _, data := range testData {
+		policier.SetConnRate(data.ConnSpeed)
+		policier.SetGlobalRate(data.GlobalSpeed)
+
+		for i := 0; i < 5; i++ {
+			go testnet.runClient(t, rchan)
+		}
+		for i := 0; i < 5; i++ {
+			res := <-rchan
+			checkResult(t, fmt.Sprintf("mixed [%d/%d]", data.GlobalSpeed, data.ConnSpeed), res, data.Expected)
+		}
 	}
 }
 
