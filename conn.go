@@ -23,22 +23,21 @@ type WrappedConn struct {
 
 	limiter *rate.Limiter
 
-	sizes      chan<- uint64
-	permits    <-chan struct{}
 	closed     bool
 	onceCloser sync.Once
+
+	globalLimiterFunc	func() *rate.Limiter
 }
 
 //func WrapConn(conn net.Conn, bps uint64, check chan<- uint32, release <-chan struct{}) net.Conn {
 func WrapConn(conn net.Conn, bps uint64, maxChunk uint64, burstFactor *BurstFactor,
-	sizes chan<- uint64, permits <-chan struct{}) *WrappedConn {
+	glf func() *rate.Limiter) *WrappedConn {
 	wc := WrappedConn{
 		conn:        conn,
 		bps:         bps, // bytes, not bits
-		sizes:       sizes,
-		permits:     permits,
 		limiter:     rate.NewLimiter(rate.Inf, 0),
 		BurstFactor: burstFactor,
+		globalLimiterFunc:glf,
 	}
 
 	wc.setRate(bps, maxChunk)
@@ -96,8 +95,9 @@ func (c *WrappedConn) Write(b []byte) (int, error) {
 			// send whole chunkSize
 			toWrite := chunkSize - (i + chunkSize - bytes)
 
-			c.sizes <- toWrite
-			<-c.permits
+			globalLimiter := c.globalLimiterFunc()
+			globalReservation := globalLimiter.ReserveN(now, int(toWrite))
+			time.Sleep(globalReservation.DelayFrom(now))
 
 			reservation := limiter.ReserveN(now, int(toWrite))
 			time.Sleep(reservation.DelayFrom(now))
@@ -108,8 +108,9 @@ func (c *WrappedConn) Write(b []byte) (int, error) {
 		}
 
 		// send partial chunkSize
-		c.sizes <- chunkSize
-		<-c.permits
+		globalLimiter := c.globalLimiterFunc()
+		globalReservation := globalLimiter.ReserveN(now, int(chunkSize))
+		time.Sleep(globalReservation.DelayFrom(now))
 
 		reservation := limiter.ReserveN(now, int(chunkSize))
 		time.Sleep(reservation.DelayFrom(now))
@@ -150,7 +151,6 @@ func (c *WrappedConn) Close() error {
 		return ErrConnClosed
 	}
 	c.onceCloser.Do(func() {
-		close(c.sizes)
 		c.closed = true
 	})
 	return c.conn.Close()

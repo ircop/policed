@@ -6,7 +6,6 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
-	"time"
 	"unsafe"
 
 	"golang.org/x/time/rate"
@@ -116,52 +115,13 @@ func (p *Policier) Wrap(conn net.Conn, err error) (*WrappedConn, error) {
 	}
 
 	// wrap and do stuff
-	sizes := make(chan uint64)
-	permits := make(chan struct{}, 1)
-	wrapped := WrapConn(conn, p.connBPS, atomic.LoadUint64(&p.maxChunk), &p.burstFactor,
-		sizes, permits)
-
-	go p.listenConn(sizes, permits)
+	wrapped := WrapConn(conn, p.connBPS, atomic.LoadUint64(&p.maxChunk), &p.burstFactor, p.getCurrentLimiter)
 
 	// this will not work for unix sockets or pipes, but i assume we will not serve
 	// local log files over local unix socket
 	p.connPool.Store(wrapped.RemoteAddr(), wrapped)
 
 	return wrapped, nil
-}
-
-// 1: listen integers chan: chunk size to be written
-// 2: on limiter.Accept - send struct{} signal to wrapped conn
-// 3: on received struct{} in wrapped struct, write
-func (p *Policier) listenConn(sizes <-chan uint64, permits chan<- struct{}) {
-	for {
-		size, ok := <-sizes
-		if !ok {
-			close(permits)
-			return
-		}
-
-		// limit...
-		limiter := p.getCurrentLimiter()
-
-		globalBPS := atomic.LoadUint64(&p.globalBps)
-		if globalBPS == 0 {
-			permits <- struct{}{}
-			continue
-		}
-
-		// there may be very short period when max.chunk size is not updated in connection, but limiter's burst value
-		// may be decreased. With very little chance we can stuck here - so if chunk size is greater then our burst,
-		// try to reserve 'burst' size, it will compensate small traffic peak
-		if uint64(limiter.Burst()) < size && limiter.Burst() > 0 {
-			size = uint64(limiter.Burst())
-		}
-
-		now := time.Now()
-		reservation := limiter.ReserveN(time.Now(), int(size))
-		time.Sleep(reservation.DelayFrom(now))
-		permits <- struct{}{}
-	}
 }
 
 // limit range for all existing connections
